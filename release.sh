@@ -78,3 +78,4 @@ rm -f "$OUT"
 )
 
 echo "Built $OUT"
+printf '\033[0;31m%s\033[0m\n' "Remember to push commits and tags: git push --follow-tags"
