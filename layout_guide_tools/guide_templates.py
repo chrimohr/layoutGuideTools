@@ -31,8 +31,8 @@ TEMPLATE_LOAD_ERROR = None
 def _log_critical(msg):
     try:
         QgsMessageLog.logMessage(msg, "Layout Guide Tools", level=2)
-    except Exception:
-        pass
+    except (RuntimeError, AttributeError, TypeError):
+        return None
 
 
 def _validate_template(value):
@@ -42,7 +42,7 @@ def _validate_template(value):
         try:
             float(value["dynamic"])
             return None
-        except Exception:
+        except (ValueError, TypeError):
             return "dynamic must be a number"
     if isinstance(value, dict) and ("horizontal" in value or "vertical" in value):
         if "dynamic" in value:
@@ -64,7 +64,7 @@ def _validate_template(value):
             if count == 0:
                 return "horizontal and vertical must contain at least one position"
             return None
-        except Exception:
+        except (ValueError, TypeError):
             return "horizontal and vertical must contain numbers"
     if isinstance(value, list):
         try:
@@ -74,7 +74,7 @@ def _validate_template(value):
                     return "unknown orientation, expected v or h"
                 float(position)
             return None
-        except Exception:
+        except (ValueError, TypeError):
             return "static guides must be pairs of orientation and position"
     return "unknown template format"
 
@@ -92,7 +92,7 @@ def load_templates(path: str = None) -> dict:
             data = json.load(f)
     except FileNotFoundError:
         return dict(DEFAULT_TEMPLATES)
-    except Exception as e:
+    except (OSError, ValueError) as e:
         TEMPLATE_LOAD_ERROR = f"Invalid template file {file_path}: {e}. Using defaults."
         _log_critical(TEMPLATE_LOAD_ERROR)
         return dict(DEFAULT_TEMPLATES)
@@ -174,7 +174,7 @@ def add_guide_template(designer, template_name) -> bool:
 
         try:
             current_page_index = designer.view().currentPage()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             current_page_index = 0
 
         page = page_collection.page(current_page_index)
@@ -200,18 +200,22 @@ def add_guide_template(designer, template_name) -> bool:
             layout.undoStack().endMacro()
 
         return True
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError, KeyError) as e:
         _log_critical(f"Error applying template: {e}")
         return False
 
 
+def _widget_class_name(widget):
+    try:
+        return widget.metaObject().className()
+    except (RuntimeError, AttributeError):
+        return ""
+
+
 def find_guide_widget(parent) -> QWidget | None:
     for widget in parent.findChildren(QWidget):
-        try:
-            if widget.metaObject().className() == "QgsLayoutGuideWidget":
-                return widget
-        except Exception:
-            continue
+        if _widget_class_name(widget) == "QgsLayoutGuideWidget":
+            return widget
     return None
 
 
@@ -260,7 +264,7 @@ def install_guide_template_ui(designer) -> bool:
         button.clicked.connect(lambda _checked=False, d=designer, c=combo: add_guide_template(d, c.currentText()))
 
         return True
-    except Exception as e:
+    except (RuntimeError, AttributeError, TypeError, ValueError, KeyError) as e:
         _log_critical(f"Error installing UI: {e}")
         return False
 
@@ -277,14 +281,12 @@ def remove_guide_template_ui(designer) -> None:
             if parent_layout is not None:
                 parent_layout.removeWidget(container)
             container.deleteLater()
-    except Exception:
-        pass
+    except (RuntimeError, AttributeError, TypeError) as e:
+        _log_critical(f"Error removing guide template UI: {e}")
+        return None
 
 
 def iter_designer_dialogs(main_window):
     for widget in main_window.findChildren(QWidget):
-        try:
-            if widget.metaObject().className() == "QgsLayoutDesignerDialog":
-                yield widget
-        except Exception:
-            continue
+        if _widget_class_name(widget) == "QgsLayoutDesignerDialog":
+            yield widget

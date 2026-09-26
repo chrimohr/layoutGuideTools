@@ -3,6 +3,7 @@ from qgis.core import QgsSettings, Qgis
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
 
+import contextlib
 import os.path
 
 from .guide_templates import (
@@ -79,10 +80,8 @@ class layoutGuides:
             add_to_toolbar=False,
             parent=self.iface.mainWindow())
 
-        try:
+        with contextlib.suppress(TypeError, RuntimeError):
             self.iface.layoutDesignerOpened.disconnect(self.on_layout_designer_opened)
-        except Exception:
-            pass
         self.iface.layoutDesignerOpened.connect(self.on_layout_designer_opened)
 
         self.install_on_existing_designers()
@@ -90,18 +89,16 @@ class layoutGuides:
         self.first_start = True
 
     def unload(self):
-        try:
+        with contextlib.suppress(TypeError, RuntimeError):
             self.iface.layoutDesignerOpened.disconnect(self.on_layout_designer_opened)
-        except Exception:
-            pass
 
         try:
             main_window = self.iface.mainWindow()
             if main_window is not None:
                 for designer in iter_designer_dialogs(main_window):
                     remove_guide_template_ui(designer)
-        except Exception:
-            pass
+        except (RuntimeError, AttributeError, TypeError) as e:
+            guide_templates._log_critical(f"Error removing guide template UI: {e}")
 
         for action in self.actions:
             self.iface.removePluginMenu(
@@ -112,7 +109,7 @@ class layoutGuides:
     def _report_template_error(self, parent=None):
         try:
             error = guide_templates.TEMPLATE_LOAD_ERROR
-        except Exception:
+        except (RuntimeError, AttributeError):
             return
         if not error or error == self._template_error_shown:
             return
@@ -124,8 +121,8 @@ class layoutGuides:
                 level=Qgis.MessageLevel.Critical,
                 duration=0,
             )
-        except Exception:
-            pass
+        except (RuntimeError, AttributeError, TypeError) as e:
+            guide_templates._log_critical(f"Error showing template error in message bar: {e}")
         try:
             if parent is None:
                 parent = self.iface.mainWindow()
@@ -134,14 +131,14 @@ class layoutGuides:
                 self.tr(u'Layout Guide Tools'),
                 error,
             )
-        except Exception:
-            pass
+        except (RuntimeError, AttributeError, TypeError) as e:
+            guide_templates._log_critical(f"Error showing template error dialog: {e}")
 
     def on_layout_designer_opened(self, designer):
         install_guide_template_ui(designer)
         try:
             parent = designer.window()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             parent = None
         self._report_template_error(parent)
 
@@ -152,8 +149,8 @@ class layoutGuides:
                 return
             for designer in iter_designer_dialogs(main_window):
                 install_guide_template_ui(designer)
-        except Exception:
-            pass
+        except (RuntimeError, AttributeError, TypeError) as e:
+            guide_templates._log_critical(f"Error installing guide template UI: {e}")
         self._report_template_error()
 
     def run(self):
@@ -166,8 +163,8 @@ class layoutGuides:
                 has_designer = any(
                     True for _ in iter_designer_dialogs(main_window)
                 )
-        except Exception:
-            pass
+        except (RuntimeError, AttributeError, TypeError):
+            has_designer = False
 
         if has_designer:
             self.iface.messageBar().pushMessage(
@@ -184,8 +181,8 @@ class layoutGuides:
                     level=Qgis.MessageLevel.Info,
                     duration=8,
                 )
-            except Exception:
-                pass
+            except (RuntimeError, AttributeError, TypeError) as e:
+                guide_templates._log_critical(f"Error showing message bar message: {e}")
             QMessageBox.information(
                 self.iface.mainWindow(),
                 self.tr(u'Layout Guide Tools'),

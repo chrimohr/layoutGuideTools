@@ -6,7 +6,7 @@
 name=Layout Guide Tools
 qgisMinimumVersion=3.0
 description=Create Layout Guides
-version=0.2
+version=0.3
 author=Christoph Mohr
 email=moin@chrimohr.com
 
