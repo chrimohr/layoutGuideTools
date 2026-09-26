@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Store user templates in the QGIS profile
 
 ## [0.4]
 - UI Changes

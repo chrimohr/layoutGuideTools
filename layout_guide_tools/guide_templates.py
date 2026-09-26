@@ -12,6 +12,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.core import (
     Qgis,
+    QgsApplication,
     QgsLayoutGuide,
     QgsLayoutMeasurement,
     QgsMessageLog,
@@ -88,23 +89,40 @@ def _is_valid_template(value) -> bool:
     return _validate_template(value) is None
 
 
-def load_templates(path: str = None) -> dict:
-    global TEMPLATE_LOAD_ERROR
-    TEMPLATE_LOAD_ERROR = None
-    file_path = path or TEMPLATES_FILE
+def _resolve_user_path():
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        return dict(DEFAULT_TEMPLATES)
+        base = QgsApplication.qgisSettingsDirPath()
+    except (RuntimeError, AttributeError, TypeError):
+        return None
+    if not base:
+        return None
+    return os.path.join(base, "layout_guide_tools", "guide_templates.json")
+
+
+def _seed_user_templates(user_path):
+    try:
+        if os.path.exists(user_path):
+            return True
+        os.makedirs(os.path.dirname(user_path), exist_ok=True)
+        try:
+            with open(TEMPLATES_FILE, "r", encoding="utf-8") as src:
+                shipped = src.read()
+            json.loads(shipped)
+        except (OSError, ValueError):
+            shipped = json.dumps(DEFAULT_TEMPLATES, indent=2)
+        with open(user_path, "w", encoding="utf-8") as dst:
+            dst.write(shipped)
+        return True
     except (OSError, ValueError) as e:
-        TEMPLATE_LOAD_ERROR = f"Invalid template file {file_path}: {e}. Using defaults."
-        _log_critical(TEMPLATE_LOAD_ERROR)
-        return dict(DEFAULT_TEMPLATES)
+        _log_critical(f"Could not create user template file {user_path}: {e}")
+        return False
+
+
+def _read_template_file(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
     if not isinstance(data, dict) or not data:
-        TEMPLATE_LOAD_ERROR = f"Invalid template file {file_path}: expected a non-empty object. Using defaults."
-        _log_critical(TEMPLATE_LOAD_ERROR)
-        return dict(DEFAULT_TEMPLATES)
+        raise ValueError("expected a non-empty object")
     valid = {}
     problems = []
     for name, value in data.items():
@@ -113,17 +131,43 @@ def load_templates(path: str = None) -> dict:
             valid[name] = value
         else:
             problems.append(f"{name}: {problem}")
-    if problems:
-        TEMPLATE_LOAD_ERROR = f"Invalid templates in {file_path}: " + "; ".join(problems)
-        _log_critical(TEMPLATE_LOAD_ERROR)
-    if not valid:
-        if TEMPLATE_LOAD_ERROR:
-            TEMPLATE_LOAD_ERROR += " Using defaults."
+    return valid, problems
+
+
+def load_templates(path: str = None) -> dict:
+    global TEMPLATE_LOAD_ERROR
+    TEMPLATE_LOAD_ERROR = None
+    if path:
+        candidates = [path]
+    else:
+        user_path = _resolve_user_path()
+        if user_path is not None:
+            _seed_user_templates(user_path)
+            candidates = [user_path, TEMPLATES_FILE]
         else:
-            TEMPLATE_LOAD_ERROR = f"No valid templates in {file_path}. Using defaults."
-        _log_critical(TEMPLATE_LOAD_ERROR)
-        return dict(DEFAULT_TEMPLATES)
-    return valid
+            candidates = [TEMPLATES_FILE]
+    for file_path in candidates:
+        try:
+            valid, problems = _read_template_file(file_path)
+        except FileNotFoundError:
+            valid = None
+        except (OSError, ValueError) as e:
+            TEMPLATE_LOAD_ERROR = f"Invalid template file {file_path}: {e}. Using defaults."
+            _log_critical(TEMPLATE_LOAD_ERROR)
+            valid = None
+        if valid is None:
+            continue
+        if problems:
+            TEMPLATE_LOAD_ERROR = f"Invalid templates in {file_path}: " + "; ".join(problems)
+            _log_critical(TEMPLATE_LOAD_ERROR)
+        if valid:
+            return valid
+    if TEMPLATE_LOAD_ERROR:
+        TEMPLATE_LOAD_ERROR += " Using defaults."
+    else:
+        TEMPLATE_LOAD_ERROR = "No valid templates found. Using defaults."
+    _log_critical(TEMPLATE_LOAD_ERROR)
+    return dict(DEFAULT_TEMPLATES)
 
 
 def reload_templates(path: str = None) -> dict:
@@ -322,7 +366,11 @@ def install_guide_template_ui(designer) -> bool:
         combo = QComboBox(container)
         combo.setObjectName("guideTemplateCombo")
         combo.addItems(list(GUIDE_TEMPLATES.keys()))
-        combo.setToolTip("Templates can be customized in guide_templates.json.")
+        user_path = _resolve_user_path()
+        if user_path is not None:
+            combo.setToolTip(f"Templates can be customized in {user_path}.")
+        else:
+            combo.setToolTip("Templates can be customized in guide_templates.json.")
 
         button = QPushButton("Add", container)
         button.setObjectName("guideTemplateAddButton")

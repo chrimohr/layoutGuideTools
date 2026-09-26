@@ -6,7 +6,7 @@ version=0.4
 author=Christoph Mohr
 email=moin@chrimohr.com
 
-about=This plugin extends the Layout Designer with a custom guide template function. An additional selection field allows predefined guide lines to be quickly applied to the current layout page. Templates can be customized by editing guide_templates.json in the plugin folder.
+about=This plugin extends the Layout Designer with a custom guide template function. An additional selection field allows predefined guide lines to be quickly applied to the current layout page. Templates are stored in guide_templates.json in your QGIS profile.
 
 tracker=https://github.com/chrimohr/layoutGuideTools
 repository=https://github.com/chrimohr/layoutGuideTools
