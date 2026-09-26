@@ -239,6 +239,7 @@ def install_guide_template_ui(designer) -> bool:
         combo.setObjectName("guideTemplateCombo")
         combo.setMinimumWidth(180)
         combo.addItems(list(GUIDE_TEMPLATES.keys()))
+        combo.setToolTip("Templates can be customized in guide_templates.json.")
 
         button = QPushButton("Add", container)
         button.setObjectName("guideTemplateAddButton")

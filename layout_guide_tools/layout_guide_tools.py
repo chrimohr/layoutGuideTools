@@ -191,6 +191,7 @@ class layoutGuides:
                 self.tr(u'Layout Guide Tools'),
                 self.tr(
                     u'Open a print layout (Project > New Print Layout).\n'
-                    u'The guide template selector appears in the Guides panel.'
+                    u'The guide template selector appears in the Guides panel.\n'
+                    u'Templates can be customized in guide_templates.json inside the plugin folder.'
                 ),
             )
