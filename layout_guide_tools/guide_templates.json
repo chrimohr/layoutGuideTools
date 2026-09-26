@@ -1,0 +1,12 @@
+{
+  "10mm margin": {
+    "dynamic": 10
+  },
+  "20mm margin": {
+    "dynamic": 20
+  },
+  "A4 Landscape Custom": {
+    "horizontal": [20, 200],
+    "vertical": [10, 287]
+  }
+}

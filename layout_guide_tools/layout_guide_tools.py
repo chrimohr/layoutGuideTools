@@ -10,6 +10,7 @@ from .guide_templates import (
     remove_guide_template_ui,
     iter_designer_dialogs,
 )
+from . import guide_templates
 
 
 class layoutGuides:
@@ -30,6 +31,7 @@ class layoutGuides:
         self.actions = []
         self.menu = self.tr(u'&Layout Guide Tools')
         self.first_start = None
+        self._template_error_shown = None
 
     def tr(self, message):
         return QCoreApplication.translate('layoutGuides', message)
@@ -107,8 +109,41 @@ class layoutGuides:
                 action)
             self.iface.removeToolBarIcon(action)
 
+    def _report_template_error(self, parent=None):
+        try:
+            error = guide_templates.TEMPLATE_LOAD_ERROR
+        except Exception:
+            return
+        if not error or error == self._template_error_shown:
+            return
+        self._template_error_shown = error
+        try:
+            self.iface.messageBar().pushMessage(
+                self.tr(u'Layout Guide Tools'),
+                error,
+                level=Qgis.MessageLevel.Critical,
+                duration=0,
+            )
+        except Exception:
+            pass
+        try:
+            if parent is None:
+                parent = self.iface.mainWindow()
+            QMessageBox.critical(
+                parent,
+                self.tr(u'Layout Guide Tools'),
+                error,
+            )
+        except Exception:
+            pass
+
     def on_layout_designer_opened(self, designer):
         install_guide_template_ui(designer)
+        try:
+            parent = designer.window()
+        except Exception:
+            parent = None
+        self._report_template_error(parent)
 
     def install_on_existing_designers(self):
         try:
@@ -119,6 +154,7 @@ class layoutGuides:
                 install_guide_template_ui(designer)
         except Exception:
             pass
+        self._report_template_error()
 
     def run(self):
         self.install_on_existing_designers()

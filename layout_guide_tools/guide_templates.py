@@ -1,3 +1,6 @@
+import json
+import os
+
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QWidget,
@@ -15,13 +18,14 @@ from qgis.core import (
 )
 
 TEMPLATE_WIDGET_OBJECT_NAME = "guideTemplateWidget"
+TEMPLATES_FILE = os.path.join(os.path.dirname(__file__), "guide_templates.json")
 
-GUIDE_TEMPLATES = {
-    "10 mm": {"dynamic": 10},
-    "20 mm": {"dynamic": 20},
-    "A4 Custom": [("v", 10), ("v", 212), ("v", 212.3), ("v", 287), ("h", 10), ("h", 200.3)],
-    "A3 Custom": [("v", 10), ("v", 335), ("v", 335.3), ("v", 410), ("h", 10), ("h", 287)],
+DEFAULT_TEMPLATES = {
+    "10mm margin": {"dynamic": 10},
+    "20mm margin": {"dynamic": 20},
 }
+
+TEMPLATE_LOAD_ERROR = None
 
 
 def _log(level: str, msg: str):
@@ -32,13 +36,110 @@ def _log(level: str, msg: str):
     print(f"[GUIDE-TOOL] {level}: {msg}")
 
 
+def _validate_template(value):
+    if isinstance(value, dict) and "dynamic" in value:
+        if "horizontal" in value or "vertical" in value:
+            return "dynamic must not be combined with horizontal or vertical"
+        try:
+            float(value["dynamic"])
+            return None
+        except Exception:
+            return "dynamic must be a number"
+    if isinstance(value, dict) and ("horizontal" in value or "vertical" in value):
+        if "dynamic" in value:
+            return "dynamic must not be combined with horizontal or vertical"
+        try:
+            positions_by_key = {}
+            for key in ("horizontal", "vertical"):
+                positions = value.get(key, [])
+                if positions is None:
+                    positions = []
+                if not isinstance(positions, list):
+                    return f"{key} must be a list"
+                positions_by_key[key] = positions
+            count = 0
+            for positions in positions_by_key.values():
+                for pos in positions:
+                    float(pos)
+                    count += 1
+            if count == 0:
+                return "horizontal and vertical must contain at least one position"
+            return None
+        except Exception:
+            return "horizontal and vertical must contain numbers"
+    if isinstance(value, list):
+        try:
+            for item in value:
+                orientation, position = item
+                if orientation not in ("v", "h"):
+                    return "unknown orientation, expected v or h"
+                float(position)
+            return None
+        except Exception:
+            return "static guides must be pairs of orientation and position"
+    return "unknown template format"
+
+
+def _is_valid_template(value) -> bool:
+    return _validate_template(value) is None
+
+
+def load_templates(path: str = None) -> dict:
+    global TEMPLATE_LOAD_ERROR
+    TEMPLATE_LOAD_ERROR = None
+    file_path = path or TEMPLATES_FILE
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        _log("ERROR", f"Template file not found: {file_path}. Using defaults.")
+        return dict(DEFAULT_TEMPLATES)
+    except Exception as e:
+        TEMPLATE_LOAD_ERROR = f"Invalid template file {file_path}: {e}. Using defaults."
+        _log("EXCEPTION", TEMPLATE_LOAD_ERROR)
+        return dict(DEFAULT_TEMPLATES)
+    if not isinstance(data, dict) or not data:
+        TEMPLATE_LOAD_ERROR = f"Invalid template file {file_path}: expected a non-empty object. Using defaults."
+        _log("ERROR", TEMPLATE_LOAD_ERROR)
+        return dict(DEFAULT_TEMPLATES)
+    valid = {}
+    problems = []
+    for name, value in data.items():
+        problem = _validate_template(value)
+        if problem is None:
+            valid[name] = value
+        else:
+            problems.append(f"{name}: {problem}")
+            _log("ERROR", f"Ignoring invalid template {name}: {problem}")
+    if problems:
+        TEMPLATE_LOAD_ERROR = f"Invalid templates in {file_path}: " + "; ".join(problems)
+        _log("ERROR", TEMPLATE_LOAD_ERROR)
+    if not valid:
+        if TEMPLATE_LOAD_ERROR:
+            TEMPLATE_LOAD_ERROR += " Using defaults."
+        else:
+            TEMPLATE_LOAD_ERROR = f"No valid templates in {file_path}. Using defaults."
+        _log("ERROR", TEMPLATE_LOAD_ERROR)
+        return dict(DEFAULT_TEMPLATES)
+    return valid
+
+
+def reload_templates(path: str = None) -> dict:
+    GUIDE_TEMPLATES.clear()
+    GUIDE_TEMPLATES.update(load_templates(path))
+    return GUIDE_TEMPLATES
+
+
+GUIDE_TEMPLATES = load_templates()
+
+
 def resolve_template_guides(template_name, page):
     if template_name not in GUIDE_TEMPLATES:
         raise KeyError(f"Unknown template: {template_name}")
 
     template_data = GUIDE_TEMPLATES[template_name]
 
-    if isinstance(template_data, dict) and "dynamic" in template_data:
+    if isinstance(template_data, dict) and "dynamic" in template_data and "horizontal" not in template_data and "vertical" not in template_data:
         margin = float(template_data["dynamic"])
         page_size = page.pageSize()
         width = page_size.width()
@@ -50,8 +151,17 @@ def resolve_template_guides(template_name, page):
             ("h", margin),
             ("h", height - margin),
         ]
+    elif isinstance(template_data, dict) and ("horizontal" in template_data or "vertical" in template_data) and "dynamic" not in template_data:
+        guides = []
+        for pos in template_data.get("vertical", []) or []:
+            guides.append(("v", float(pos)))
+        for pos in template_data.get("horizontal", []) or []:
+            guides.append(("h", float(pos)))
+        if not guides:
+            raise ValueError(f"Unknown template format for {template_name}")
+        return guides
     elif isinstance(template_data, list):
-        return list(template_data)
+        return [(orientation, float(position)) for orientation, position in template_data]
     else:
         raise ValueError(f"Unknown template format for {template_name}")
 
@@ -115,6 +225,7 @@ def find_guide_widget(parent) -> QWidget | None:
 
 def install_guide_template_ui(designer) -> bool:
     try:
+        reload_templates()
         window = designer.window()
         guide_widget = find_guide_widget(window)
         if guide_widget is None:
