@@ -28,12 +28,11 @@ DEFAULT_TEMPLATES = {
 TEMPLATE_LOAD_ERROR = None
 
 
-def _log(level: str, msg: str):
+def _log_critical(msg):
     try:
-        QgsMessageLog.logMessage(f"[GUIDE-TOOL] {msg}", "Layout Guide Tools", level=0)
+        QgsMessageLog.logMessage(msg, "Layout Guide Tools", level=2)
     except Exception:
         pass
-    print(f"[GUIDE-TOOL] {level}: {msg}")
 
 
 def _validate_template(value):
@@ -92,15 +91,14 @@ def load_templates(path: str = None) -> dict:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        _log("ERROR", f"Template file not found: {file_path}. Using defaults.")
         return dict(DEFAULT_TEMPLATES)
     except Exception as e:
         TEMPLATE_LOAD_ERROR = f"Invalid template file {file_path}: {e}. Using defaults."
-        _log("EXCEPTION", TEMPLATE_LOAD_ERROR)
+        _log_critical(TEMPLATE_LOAD_ERROR)
         return dict(DEFAULT_TEMPLATES)
     if not isinstance(data, dict) or not data:
         TEMPLATE_LOAD_ERROR = f"Invalid template file {file_path}: expected a non-empty object. Using defaults."
-        _log("ERROR", TEMPLATE_LOAD_ERROR)
+        _log_critical(TEMPLATE_LOAD_ERROR)
         return dict(DEFAULT_TEMPLATES)
     valid = {}
     problems = []
@@ -110,16 +108,15 @@ def load_templates(path: str = None) -> dict:
             valid[name] = value
         else:
             problems.append(f"{name}: {problem}")
-            _log("ERROR", f"Ignoring invalid template {name}: {problem}")
     if problems:
         TEMPLATE_LOAD_ERROR = f"Invalid templates in {file_path}: " + "; ".join(problems)
-        _log("ERROR", TEMPLATE_LOAD_ERROR)
+        _log_critical(TEMPLATE_LOAD_ERROR)
     if not valid:
         if TEMPLATE_LOAD_ERROR:
             TEMPLATE_LOAD_ERROR += " Using defaults."
         else:
             TEMPLATE_LOAD_ERROR = f"No valid templates in {file_path}. Using defaults."
-        _log("ERROR", TEMPLATE_LOAD_ERROR)
+        _log_critical(TEMPLATE_LOAD_ERROR)
         return dict(DEFAULT_TEMPLATES)
     return valid
 
@@ -144,7 +141,6 @@ def resolve_template_guides(template_name, page):
         page_size = page.pageSize()
         width = page_size.width()
         height = page_size.height()
-        _log("DEBUG", f"Dynamic calculation ({margin}mm): page {width:.2f}x{height:.2f}mm")
         return [
             ("v", margin),
             ("v", width - margin),
@@ -170,12 +166,10 @@ def add_guide_template(designer, template_name) -> bool:
     try:
         layout = designer.view().currentLayout()
         if layout is None:
-            _log("ERROR", "No active layout found.")
             return False
 
         page_collection = layout.pageCollection()
         if page_collection.pageCount() == 0:
-            _log("ERROR", "Layout has no pages.")
             return False
 
         try:
@@ -187,7 +181,6 @@ def add_guide_template(designer, template_name) -> bool:
         if page is None:
             page = page_collection.page(0)
         if page is None:
-            _log("ERROR", "Could not determine a layout page.")
             return False
 
         final_guides = resolve_template_guides(template_name, page)
@@ -206,10 +199,9 @@ def add_guide_template(designer, template_name) -> bool:
         finally:
             layout.undoStack().endMacro()
 
-        _log("INFO", f"Template '{template_name}' applied.")
         return True
     except Exception as e:
-        _log("EXCEPTION", f"Error applying template: {e}")
+        _log_critical(f"Error applying template: {e}")
         return False
 
 
@@ -266,10 +258,9 @@ def install_guide_template_ui(designer) -> bool:
 
         button.clicked.connect(lambda _checked=False, d=designer, c=combo: add_guide_template(d, c.currentText()))
 
-        _log("INFO", "Template UI installed.")
         return True
     except Exception as e:
-        _log("EXCEPTION", f"Error installing UI: {e}")
+        _log_critical(f"Error installing UI: {e}")
         return False
 
 
@@ -285,8 +276,8 @@ def remove_guide_template_ui(designer) -> None:
             if parent_layout is not None:
                 parent_layout.removeWidget(container)
             container.deleteLater()
-    except Exception as e:
-        _log("EXCEPTION", f"Error removing UI: {e}")
+    except Exception:
+        pass
 
 
 def iter_designer_dialogs(main_window):
