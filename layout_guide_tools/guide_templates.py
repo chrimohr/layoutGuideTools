@@ -3,11 +3,11 @@ import os
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
+    QApplication,
     QWidget,
     QComboBox,
     QPushButton,
     QHBoxLayout,
-    QLabel,
     QVBoxLayout,
 )
 from qgis.core import (
@@ -16,6 +16,11 @@ from qgis.core import (
     QgsLayoutMeasurement,
     QgsMessageLog,
 )
+
+try:
+    from qgis.gui import QgsCollapsibleGroupBoxBasic
+except Exception:
+    QgsCollapsibleGroupBoxBasic = None
 
 TEMPLATE_WIDGET_OBJECT_NAME = "guideTemplateWidget"
 TEMPLATES_FILE = os.path.join(os.path.dirname(__file__), "guide_templates.json")
@@ -213,10 +218,85 @@ def _widget_class_name(widget):
 
 
 def find_guide_widget(parent) -> QWidget | None:
+    if parent is None:
+        return None
     for widget in parent.findChildren(QWidget):
         if _widget_class_name(widget) == "QgsLayoutGuideWidget":
             return widget
     return None
+
+
+def _insert_at_row(content_layout, container, target_row) -> bool:
+    try:
+        get_pos = getattr(content_layout, "getItemPosition", None)
+        take = getattr(content_layout, "takeAt", None)
+        if get_pos is None or take is None:
+            return False
+        count = content_layout.count()
+        if count <= 0:
+            return False
+        entries = []
+        for i in range(count):
+            item = content_layout.itemAt(i)
+            row, column, row_span, column_span = get_pos(i)
+            entries.append((item, row, column, row_span, column_span))
+        for _ in range(count):
+            take(0)
+        for item, row, column, row_span, column_span in entries:
+            shifted = row + 1 if row >= target_row else row
+            widget = item.widget()
+            try:
+                sub = item.layout()
+            except (RuntimeError, AttributeError, TypeError):
+                sub = None
+            if widget is not None:
+                content_layout.addWidget(widget, shifted, column, row_span, column_span)
+            elif sub is not None:
+                content_layout.addLayout(sub, shifted, column, row_span, column_span)
+            else:
+                try:
+                    content_layout.addItem(item, shifted, column, row_span, column_span)
+                except (RuntimeError, AttributeError, TypeError) as e:
+                    _log_critical(f"Error restoring layout item: {e}")
+        try:
+            span = content_layout.columnCount()
+        except (RuntimeError, AttributeError, TypeError):
+            span = 1
+        if not isinstance(span, int) or span < 1:
+            span = 1
+        content_layout.addWidget(container, target_row, 0, 1, span)
+        return True
+    except (RuntimeError, AttributeError, TypeError):
+        return False
+
+
+def _place_in_native_container(guide_widget, container) -> bool:
+    try:
+        scroll_area = None
+        for child in guide_widget.findChildren(QWidget):
+            if _widget_class_name(child) == "QgsScrollArea":
+                scroll_area = child
+                break
+        if scroll_area is None:
+            return False
+        content = scroll_area.widget()
+        if content is None:
+            return False
+        content_layout = content.layout()
+        if content_layout is None:
+            return False
+        if _insert_at_row(content_layout, container, 1):
+            return True
+        add = getattr(content_layout, "addWidget", None)
+        if add is None:
+            return False
+        try:
+            add(container)
+        except (RuntimeError, AttributeError, TypeError):
+            return False
+        return True
+    except (RuntimeError, AttributeError, TypeError):
+        return False
 
 
 def install_guide_template_ui(designer) -> bool:
@@ -230,36 +310,34 @@ def install_guide_template_ui(designer) -> bool:
         if guide_widget.findChild(QWidget, TEMPLATE_WIDGET_OBJECT_NAME):
             return True
 
-        container = QWidget(guide_widget)
+        if QgsCollapsibleGroupBoxBasic is not None:
+            container = QgsCollapsibleGroupBoxBasic(guide_widget)
+            container.setTitle("Guide Templates")
+        else:
+            container = QWidget(guide_widget)
         container.setObjectName(TEMPLATE_WIDGET_OBJECT_NAME)
-        container.setMaximumHeight(40)
 
         row = QHBoxLayout(container)
-        row.setContentsMargins(5, 0, 5, 0)
-        row.setSpacing(5)
 
-        label = QLabel("Template:", container)
         combo = QComboBox(container)
         combo.setObjectName("guideTemplateCombo")
-        combo.setMinimumWidth(180)
         combo.addItems(list(GUIDE_TEMPLATES.keys()))
         combo.setToolTip("Templates can be customized in guide_templates.json.")
 
         button = QPushButton("Add", container)
         button.setObjectName("guideTemplateAddButton")
-        button.setFixedWidth(80)
 
-        row.addWidget(label)
         row.addWidget(combo, 1)
         row.addWidget(button)
 
-        main_layout = guide_widget.layout()
-        if main_layout is not None and hasattr(main_layout, "insertWidget"):
-            main_layout.insertWidget(1, container)
-        else:
-            new_layout = QVBoxLayout(guide_widget)
-            guide_widget.setLayout(new_layout)
-            new_layout.insertWidget(1, container)
+        if not _place_in_native_container(guide_widget, container):
+            main_layout = guide_widget.layout()
+            if main_layout is not None and hasattr(main_layout, "insertWidget"):
+                main_layout.insertWidget(1, container)
+            else:
+                new_layout = QVBoxLayout(guide_widget)
+                guide_widget.setLayout(new_layout)
+                new_layout.insertWidget(1, container)
 
         button.clicked.connect(lambda _checked=False, d=designer, c=combo: add_guide_template(d, c.currentText()))
 
@@ -277,16 +355,54 @@ def remove_guide_template_ui(designer) -> None:
             return
         container = guide_widget.findChild(QWidget, TEMPLATE_WIDGET_OBJECT_NAME)
         if container is not None:
-            parent_layout = guide_widget.layout()
-            if parent_layout is not None:
-                parent_layout.removeWidget(container)
+            try:
+                owner = container.parentWidget()
+                owner_layout = owner.layout() if owner is not None else None
+            except (RuntimeError, AttributeError, TypeError):
+                owner_layout = None
+            if owner_layout is not None:
+                try:
+                    owner_layout.removeWidget(container)
+                except (RuntimeError, AttributeError, TypeError) as e:
+                    _log_critical(f"Error detaching guide template UI: {e}")
             container.deleteLater()
     except (RuntimeError, AttributeError, TypeError) as e:
         _log_critical(f"Error removing guide template UI: {e}")
         return None
 
 
+def _top_level_roots(main_window):
+    try:
+        app = QApplication.instance()
+        roots = list(app.topLevelWidgets()) if app is not None else []
+    except (RuntimeError, AttributeError, TypeError):
+        roots = []
+    if main_window is not None:
+        if all(root is not main_window for root in roots):
+            roots.append(main_window)
+    return roots
+
+
+def _child_widgets(root):
+    try:
+        return root.findChildren(QWidget)
+    except (RuntimeError, AttributeError, TypeError):
+        return []
+
+
 def iter_designer_dialogs(main_window):
-    for widget in main_window.findChildren(QWidget):
-        if _widget_class_name(widget) == "QgsLayoutDesignerDialog":
-            yield widget
+    seen = set()
+    for root in _top_level_roots(main_window):
+        if root is None:
+            continue
+        if _widget_class_name(root) == "QgsLayoutDesignerDialog":
+            ident = id(root)
+            if ident not in seen:
+                seen.add(ident)
+                yield root
+        for widget in _child_widgets(root):
+            if _widget_class_name(widget) == "QgsLayoutDesignerDialog":
+                ident = id(widget)
+                if ident not in seen:
+                    seen.add(ident)
+                    yield widget
